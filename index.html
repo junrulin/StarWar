@@ -1,0 +1,287 @@
+<html>
+<head>
+    <script src="aframe.js"></script>
+    <script src="https://unpkg.com/aframe-event-set-component@3.0.3/dist/aframe-event-set-component.min.js"></script>
+</head>
+<body>
+<script>
+    let CONTROLLER = {
+        KEYUP: false,
+        KEYLEFT: false,
+        KEYDOWN: false,
+        KEYRIGHT: false,
+        DRAGGING: false
+    };
+    let MOUSERECORD = {
+        x: undefined,
+        y: undefined
+    };
+    const AXIS_X = new THREE.Vector3(1, 0, 0),
+        AXIS_Y = new THREE.Vector3(0, 1, 0),
+        AXIS_Z = new THREE.Vector3(0, 0, -1);
+    AFRAME.registerComponent('rotate-animation', {
+        schema: {
+            x: {type: 'number'},
+            y: {type: 'number'},
+            z: {type: 'number'}
+        },
+        init() {
+        },
+        tick(time, timeDelta) {
+            let el = this.el;
+            let position = el.getAttribute('rotation');
+            if (!position) {
+                return
+            } else {
+                position.x += this.data.x * timeDelta / 1000;
+                position.y += this.data.y * timeDelta / 1000;
+                position.z += this.data.z * timeDelta / 1000;
+                el.setAttribute('rotation', position);
+            }
+        }
+    });
+    AFRAME.registerComponent('move-controller', {
+        schema: {
+            speed: {type: 'number', default: 1}
+        },
+        multiple: false,
+        init() {
+            this.position = this.el.getAttribute('position');
+            this.position = new THREE.Vector3().copy(this.position);
+            this.speed = this.data.speed || 0;
+        },
+        update() {
+            this.speed = this.data.speed;
+        },
+        tick(time, timeDelta) {
+            let rotation = this.el.getAttribute('rotation');
+            let PI = Math.PI;
+            let direction = new THREE.Vector3(0, 0, -1);
+            direction.applyAxisAngle(AXIS_X, rotation.x / 180 * PI);
+            direction.applyAxisAngle(AXIS_Y, rotation.y / 180 * PI);
+            direction.applyAxisAngle(AXIS_Z, rotation.z / 180 * PI);
+
+            if (CONTROLLER.KEYUP) {
+                this.position.add(direction.multiplyScalar(this.speed * timeDelta / 1000));
+            }
+            if (CONTROLLER.KEYDOWN) {
+                this.position.sub(direction.multiplyScalar(this.speed * timeDelta / 1000));
+            }
+            if (CONTROLLER.KEYLEFT) {
+                direction = direction.cross(AXIS_Y);
+                this.position.sub(direction.multiplyScalar(this.speed * timeDelta / 1000));
+            }
+            if (CONTROLLER.KEYRIGHT) {
+                direction = direction.cross(AXIS_Y);
+                this.position.add(direction.multiplyScalar(this.speed * timeDelta / 1000));
+            }
+            this.el.setAttribute('position', this.position);
+        }
+    });
+    AFRAME.registerComponent('box', {
+        schema: {
+            width: {type: 'number', default: 1},
+            height: {type: 'number', default: 1},
+            depth: {type: 'number', default: 1},
+            color: {type: 'color', default: '#AAA'}
+        },
+        /**
+         * Initial creation and setting of the mesh.
+         */
+        init: function () {
+            var data = this.data;
+            var el = this.el;
+            // Create geometry.
+            this.geometry = new THREE.BoxBufferGeometry(data.width, data.height, data.depth);
+            // Create material.
+            this.material = new THREE.MeshStandardMaterial({color: data.color});
+            // Create mesh.
+            this.mesh = new THREE.Mesh(this.geometry, this.material);
+            // Set mesh on entity.
+            el.setObject3D('mesh', this.mesh);
+        },
+        /**
+         * Update the mesh in response to property updates.
+         */
+        update: function (oldData) {
+            var data = this.data;
+            var el = this.el;
+            // If `oldData` is empty, then this means we're in the initialization process.
+            // No need to update.
+            if (Object.keys(oldData).length === 0) {
+                return;
+            }
+            // Geometry-related properties changed. Update the geometry.
+            if (data.width !== oldData.width ||
+                data.height !== oldData.height ||
+                data.depth !== oldData.depth) {
+                el.getObject3D('mesh').geometry = new THREE.BoxBufferGeometry(data.width, data.height,
+                    data.depth);
+            }
+            // Material-related properties changed. Update the material.
+            if (data.color !== oldData.color) {
+                el.getObject3D('mesh').material.color = data.color;
+            }
+        },
+        remove: function () {
+            this.el.removeObject3D('mesh');
+        }
+    });
+    AFRAME.registerComponent('follow', {
+        schema: {
+            target: {type: 'selector'},
+            speed: {type: 'number'}
+        },
+        init: function () {
+            this.directionVec3 = new THREE.Vector3();
+        },
+        tick: function (time, timeDelta) {
+            var directionVec3 = this.directionVec3;
+            // Grab position vectors (THREE.Vector3) from the entities' three.js objects.
+            var targetPosition = this.data.target.object3D.position;
+            var currentPosition = this.el.object3D.position;
+            // Subtract the vectors to get the direction the entity should head in.
+            directionVec3.copy(targetPosition).sub(currentPosition);
+            // Calculate the distance.
+            var distance = directionVec3.length();
+            // Don't go any closer if a close proximity has been reached.
+            if (distance < 1) {
+                return;
+            }
+            // Scale the direction vector's magnitude down to match the speed.
+            var factor = this.data.speed;
+            ['x', 'y', 'z'].forEach(function (axis) {
+                directionVec3[axis] *= factor * (timeDelta / 1000);
+            });
+            // Translate the entity in the direction towards the target.
+            this.el.setAttribute('position', {
+                x: currentPosition.x + directionVec3.x,
+                y: currentPosition.y + directionVec3.y,
+                z: currentPosition.z + directionVec3.z
+            });
+        }
+    });
+    AFRAME.registerComponent('camera-controller', {
+        init() {
+            this.el.addEventListener('cameramove', (ev) => {
+                let rotation = this.el.getAttribute('rotation');
+                rotation.x -= ev.detail.y || 0;
+                rotation.y -= ev.detail.x || 0;
+                this.el.setAttribute('rotation', rotation);
+            })
+        }
+    });
+
+
+    window.addEventListener('keydown', (ev) => {
+        switch (ev.keyCode) {
+            case 87:    //W
+                CONTROLLER.KEYUP = true;
+                break;
+            case 65:    //A
+                CONTROLLER.KEYLEFT = true;
+                break;
+            case 83:    //S
+                CONTROLLER.KEYDOWN = true;
+                break;
+            case 68:    //D
+                CONTROLLER.KEYRIGHT = true;
+                break;
+            default:
+                break;
+        }
+    });
+    window.addEventListener('keyup', (ev) => {
+        switch (ev.keyCode) {
+            case 87:    //W
+                CONTROLLER.KEYUP = false;
+                break;
+            case 65:    //A
+                CONTROLLER.KEYLEFT = false;
+                break;
+            case 83:    //S
+                CONTROLLER.KEYDOWN = false;
+                break;
+            case 68:    //D
+                CONTROLLER.KEYRIGHT = false;
+                break;
+            default:
+                break;
+        }
+    });
+    window.addEventListener('mousedown', (ev) => {
+        CONTROLLER.DRAGGING = true;
+    });
+    window.addEventListener('mouseup', (ev) => {
+        CONTROLLER.DRAGGING = false;
+    });
+    window.addEventListener('mousemove', (ev) => {
+        let deltaX = MOUSERECORD.x ? ev.clientX - MOUSERECORD.x : 0;
+        let deltaY = MOUSERECORD.y ? ev.clientY - MOUSERECORD.y : 0;
+        if (CONTROLLER.DRAGGING) {
+            let camera = document.querySelector('a-camera');
+            camera.emit('cameramove', {
+                x: deltaX,
+                y: deltaY,
+                z: 0
+            }, true)
+        }
+        MOUSERECORD.x = ev.clientX;
+        MOUSERECORD.y = ev.clientY;
+    })
+
+</script>
+<!--<a-scene>-->
+<!--<a-box id="box" position="-1 0.5 -3" color="#4CC3D9"-->
+<!--width="3" height="2" depth="1"-->
+<!--move-controller="speed:0.1"-->
+<!--event-set__enter="_event: mouseenter; color: #8FF7FF"></a-box>-->
+<!--<a-sphere position="1 0.5 3" radius="2"></a-sphere>-->
+<!--<a-box position="0 0 -4" rotation="-90 0 0" width="4" height="200" depth="2" color="#7BC8A4"></a-box>-->
+<!--<a-sky color="#ECECEC"></a-sky>-->
+<!--<a-camera>-->
+<!--<a-cursor></a-cursor>-->
+<!--</a-camera>-->
+<!--</a-scene>-->
+<a-scene>
+    <a-box position="0 -2 0" rotation="0 0 0" width="4" height="2" depth="200" color="#7BC8A4"></a-box>
+    <a-entity position="0 0 0" move-controller="speed:10;" camera-controller>
+        <a-box id="target"
+               position="0 0 0" width="2" height="1" depth="3" color="#FFC65D"
+               event-set__enter="_event: mouseenter; _target: #cylinderText; visible: true"
+               event-set__leave="_event: mouseleave; _target: #cylinderText; visible: false"
+        >
+            <a-text id="cylinderText" value="This is a cylinder" align="center" color="#FFF" visible="false"
+                    position="0 -0.55 0.55"
+                    geometry="primitive: plane; width: 1.75" material="color: #333"></a-text>
+        </a-box>
+        <a-entity position="0 0 5">
+            <a-camera look-controls-enabled="false" wasd-controls-enabled="false">
+                <a-cursor></a-cursor>
+            </a-camera>
+        </a-entity>
+    </a-entity>
+    <a-sky color="#111" position="0 0 0" rotate-animation="y:10;"></a-sky>
+</a-scene>
+<script>
+    let stars = [];
+    let sky = document.querySelector('a-sky');
+    let starTemplate = document.createElement('a-sphere');
+    let root = document.createDocumentFragment();
+    starTemplate.setAttribute('radius', 1);
+    starTemplate.setAttribute('color', '#FFFFFF');
+    for (let i = 0; i < 1000; i++) {
+        stars.push(starTemplate.cloneNode());
+    }
+    stars.forEach((star) => {
+        star.setAttribute('position', {
+            x: Math.random() * 1000 - 500,
+            y: Math.random() * 1000 - 500,
+            z: Math.random() * 1000 - 500,
+        });
+        root.appendChild(star);
+    })
+    sky.appendChild(root);
+</script>
+</body>
+</html>
